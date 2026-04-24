@@ -1,39 +1,121 @@
 const express = require('express');
-const cors = require('cors');
-const dotenv = require('dotenv');
 const { Pool } = require('pg');
-
-dotenv.config();
+const cors = require('cors');
+require('dotenv').config();
 
 const app = express();
-
 app.use(cors());
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
+// Database connection
 const pool = new Pool({
-  host: process.env.DB_HOST,
-  port: process.env.DB_PORT,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
+  connectionString: process.env.DATABASE_URL
 });
 
+// Test database connection
 pool.query('SELECT NOW()', (err, res) => {
   if (err) {
-    console.error('❌ DB failed:', err.message);
+    console.error('❌ Database connection failed:', err);
   } else {
-    console.log('✅ Database connected!');
+    console.log('✅ Database connected');
   }
 });
 
-app.get('/api/health', async (req, res) => {
-  try {
-    const result = await pool.query('SELECT NOW()');
-    res.json({ status: 'ok', database: 'connected', message: 'BITS Connect Backend is running!' });
-  } catch (error) {
-    res.json({ status: 'error', error: error.message });
+// Create tables if they don't exist
+pool.query(`
+  CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS messages (
+    id SERIAL PRIMARY KEY,
+    sender_id INTEGER NOT NULL,
+    receiver_id INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    emoji_reaction VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (sender_id) REFERENCES users(id),
+    FOREIGN KEY (receiver_id) REFERENCES users(id)
+  );
+`, (err, res) => {
+  if (err) {
+    console.error('❌ Table creation failed:', err);
+  } else {
+    console.log('✅ Tables created/verified');
   }
+});
+
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', database: 'connected', message: 'BITS Connect Backend is running!' });
+});
+
+// Get all messages between two users
+app.get('/api/messages/:senderId/:receiverId', (req, res) => {
+  const { senderId, receiverId } = req.params;
+  
+  pool.query(
+    'SELECT * FROM messages WHERE (sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1) ORDER BY created_at ASC',
+    [senderId, receiverId],
+    (err, result) => {
+      if (err) {
+        console.error('Error fetching messages:', err);
+        res.status(500).json({ success: false, error: err.message });
+      } else {
+        res.json({ success: true, messages: result.rows });
+      }
+    }
+  );
+});
+
+// Send a message
+app.post('/api/messages', (req, res) => {
+  const { sender_id, receiver_id, text } = req.body;
+
+  if (!sender_id || !receiver_id || !text) {
+    return res.status(400).json({ success: false, error: 'Missing required fields' });
+  }
+
+  pool.query(
+    'INSERT INTO messages (sender_id, receiver_id, text) VALUES ($1, $2, $3) RETURNING *',
+    [sender_id, receiver_id, text],
+    (err, result) => {
+      if (err) {
+        console.error('Error sending message:', err);
+        res.status(500).json({ success: false, error: err.message });
+      } else {
+        res.json({ success: true, message: result.rows[0] });
+      }
+    }
+  );
+});
+
+// Add emoji reaction to message
+app.put('/api/messages/:messageId/emoji', (req, res) => {
+  const { messageId } = req.params;
+  const { emoji } = req.body;
+
+  const validEmojis = ['❤️', '👍', '😊', '😢', '😠', '🎉', '😴', '🤔', '🎊', '📚', '🍕', '💪'];
+
+  if (!validEmojis.includes(emoji)) {
+    return res.status(400).json({ success: false, error: 'Invalid emoji' });
+  }
+
+  pool.query(
+    'UPDATE messages SET emoji_reaction = $1 WHERE id = $2 RETURNING *',
+    [emoji, messageId],
+    (err, result) => {
+      if (err) {
+        console.error('Error updating emoji:', err);
+        res.status(500).json({ success: false, error: err.message });
+      } else {
+        res.json({ success: true, message: result.rows[0] });
+      }
+    }
+  );
 });
 
 // Admin endpoints (inline - no separate file)
@@ -57,7 +139,7 @@ const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
-  console.log(`📊 Admin: http://localhost:${PORT}/api/admin/stats`);
+  console.log(`📊 Health: http://localhost:${PORT}/api/health`);
 });
 
 module.exports = { pool, app };
