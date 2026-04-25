@@ -7,44 +7,17 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Database connection
+// Database connection - use DATABASE_URL from environment
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
+  connectionString: process.env.DATABASE_URL || process.env.RAILWAY_DATABASE_URL
 });
 
 // Test database connection
 pool.query('SELECT NOW()', (err, res) => {
   if (err) {
-    console.error('❌ Database connection failed:', err);
+    console.error('❌ Database connection failed:', err.message);
   } else {
     console.log('✅ Database connected');
-  }
-});
-
-// Create tables if they don't exist
-pool.query(`
-  CREATE TABLE IF NOT EXISTS users (
-    id SERIAL PRIMARY KEY,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    name VARCHAR(255),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS messages (
-    id SERIAL PRIMARY KEY,
-    sender_id INTEGER NOT NULL,
-    receiver_id INTEGER NOT NULL,
-    text TEXT NOT NULL,
-    emoji_reaction VARCHAR(50),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (sender_id) REFERENCES users(id),
-    FOREIGN KEY (receiver_id) REFERENCES users(id)
-  );
-`, (err, res) => {
-  if (err) {
-    console.error('❌ Table creation failed:', err);
-  } else {
-    console.log('✅ Tables created/verified');
   }
 });
 
@@ -118,7 +91,7 @@ app.put('/api/messages/:messageId/emoji', (req, res) => {
   );
 });
 
-// Admin endpoints (inline - no separate file)
+// Admin endpoints
 app.get('/api/admin/stats', (req, res) => {
   res.json({ success: true, stats: { total: 3, approved: 1, pending: 2, crisis: 1 } });
 });
